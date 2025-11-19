@@ -2,9 +2,9 @@ import streamlit as st
 import pandas as pd
 import pydeck as pdk
 import altair as alt
+import requests
 
 from pydeck import types as ptypes
-import requests
 from pathlib import Path
 
 # ======================================
