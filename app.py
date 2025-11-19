@@ -2,12 +2,10 @@ import streamlit as st
 import pandas as pd
 import pydeck as pdk
 import altair as alt
-import re
 
 from pydeck import types as ptypes
 import requests
 from pathlib import Path
-from io import BytesIO
 
 # ======================================
 # 기본 설정
@@ -26,10 +24,10 @@ PARQUET_PATH  = Path("2025_소상공인데이터.parquet")
 # ======================================
 
 @st.cache_data
-def load_parquet_from_drive_url(shared_url: str) -> pd.DataFrame:
-    """ 다운로드 받아서 열기 """
+def load_parquet_from_drive_url() -> pd.DataFrame:
+    """ URL에서 parquet 파일 다운로드 """
 
-    # 로컬에 없으면 Google Drive에서 한 번만 다운로드
+    # 로컬에 없으면 URL에서 한 번만 다운로드
     if not PARQUET_PATH.exists():
         with requests.get(DATA_URL, stream=True) as r:
             r.raise_for_status()
@@ -69,7 +67,7 @@ def load_parquet_from_drive_url(shared_url: str) -> pd.DataFrame:
     df = df.dropna(subset=["위도", "경도"])
     return df
 
-
+# 데이터 로드
 df = load_parquet_from_drive_url(DATA_URL)
 
 
@@ -229,7 +227,7 @@ tooltip = {
 }
 
 deck = pdk.Deck(
-    layers=[scatter_layer, text_layer],  # 나중에 text_layer 추가 가능
+    layers=[scatter_layer, text_layer],  # scatter_layer, text_layer 추가
     initial_view_state=view_state,
     tooltip=tooltip,
     map_provider="carto",
@@ -333,7 +331,7 @@ with tab2:
 
 
 # ======================================
-# 하단에 표도 같이 보여주고 싶으면
+# 하단에 데이터프레임 표시
 # ======================================
 
 with st.expander("필터링된 상가 목록 보기"):
