@@ -3,9 +3,9 @@ import pandas as pd
 import pydeck as pdk
 import altair as alt
 import re
-import gdown
 
 from pydeck import types as ptypes
+import requests
 from pathlib import Path
 from io import BytesIO
 
@@ -18,9 +18,8 @@ st.set_page_config(
     layout="wide",
 )
 
-DATA_URL = "https://drive.google.com/file/d/1LiicAIvV_fultam9BXPn5eb_r9Nt0la6/view?usp=sharing"
-# DATA_URL =   "https://drive.google.com/uc?export=download&id=1LiicAIvV_fultam9BXPn5eb_r9Nt0la6"
-output = "2025_소상공인데이터_gdrive.parquet"
+DATA_URL = r"https://ktlim.xyz/data/streamlit/2025_소상공인데이터.parquet"
+PARQUET_PATH  = Path("2025_소상공인데이터.parquet")
 
 # ======================================
 # 데이터 로딩 (캐시)
@@ -28,22 +27,19 @@ output = "2025_소상공인데이터_gdrive.parquet"
 
 @st.cache_data
 def load_parquet_from_drive_url(shared_url: str) -> pd.DataFrame:
-    """ Google 드라이브 공유 링크에서 다운로드 받아서 열기 """
+    """ 다운로드 받아서 열기 """
 
-    # 1. 파일 ID 추출 (정규표현식 사용)
-    match = re.search(r"/d/([a-zA-Z0-9_-]+)", shared_url)
-    if not match:
-        raise ValueError("유효한 Google Drive 공유 링크가 아닙니다.")
-    
-    file_id = match.group(1)
-    
-    # 2. 다운로드 URL 생성
-    download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    output = "data.parquet"
+    # 로컬에 없으면 Google Drive에서 한 번만 다운로드
+    if not PARQUET_PATH.exists():
+        with requests.get(DATA_URL, stream=True) as r:
+            r.raise_for_status()
+            with open(PARQUET_PATH, "wb") as f:
+                for chunk in r.iter_content(chunk_size=1024 * 1024):
+                    if chunk:  # keep-alive chunk 무시
+                        f.write(chunk)
 
-    # 3. 파일 다운로드 및 읽기
-    gdown.download(download_url, output, quiet=True)
-    df = pd.read_parquet(output, engine="pyarrow")
+    # Parquet 읽기
+    df = pd.read_parquet(PARQUET_PATH, engine="pyarrow")
 
     # 최소 필요 컬럼 체크 (안전장치)
     required_cols = [
