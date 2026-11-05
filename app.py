@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import pydeck as pdk
 import altair as alt
-import requests
-
 from pydeck import types as ptypes
 from pathlib import Path
 
@@ -16,28 +14,16 @@ st.set_page_config(
     layout="wide",
 )
 
-DATA_URL = r"https://ktlim.xyz/data/streamlit/2025_소상공인데이터.parquet"
-PARQUET_PATH  = Path("2025_소상공인데이터.parquet")
+DATA_PATH = Path("2025_소상공인데이터.parquet") 
+
 
 # ======================================
 # 데이터 로딩 (캐시)
 # ======================================
 
 @st.cache_data
-def load_parquet_from_drive_url() -> pd.DataFrame:
-    """ URL에서 parquet 파일 다운로드 """
-
-    # 로컬에 없으면 URL에서 한 번만 다운로드
-    if not PARQUET_PATH.exists():
-        with requests.get(DATA_URL, stream=True) as r:
-            r.raise_for_status()
-            with open(PARQUET_PATH, "wb") as f:
-                for chunk in r.iter_content(chunk_size=1024 * 1024):
-                    if chunk:  # keep-alive chunk 무시
-                        f.write(chunk)
-
-    # Parquet 읽기
-    df = pd.read_parquet(PARQUET_PATH, engine="pyarrow")
+def load_data(path: Path) -> pd.DataFrame:
+    df = pd.read_parquet(path)
 
     # 최소 필요 컬럼 체크 (안전장치)
     required_cols = [
@@ -65,10 +51,11 @@ def load_parquet_from_drive_url() -> pd.DataFrame:
 
     # 위·경도 없는 행은 미리 제거
     df = df.dropna(subset=["위도", "경도"])
+
     return df
 
-# 데이터 로드
-df = load_parquet_from_drive_url(DATA_URL)
+
+df = load_data(DATA_PATH)
 
 
 # ======================================
@@ -99,12 +86,18 @@ selected_hjdong = st.sidebar.selectbox("행정동명", hjdong_options)
 if selected_hjdong != "(전체)":
     filtered = filtered[filtered["행정동명"] == selected_hjdong]
 
+# 행정동까지 분류한 df
+area_df = filtered
+
 # 상권업종 대분류
 big_options = ["(전체)"] + sorted(filtered["대분류명"].dropna().unique().tolist())
 selected_big = st.sidebar.selectbox("상권업종 대분류", big_options)
 
 if selected_big != "(전체)":
     filtered = filtered[filtered["대분류명"] == selected_big]
+    big_df = filtered # 대분류 df
+else:
+    big_df = area_df
 
 # 상권업종 중분류
 mid_options = ["(전체)"] + sorted(filtered["중분류명"].dropna().unique().tolist())
@@ -112,6 +105,9 @@ selected_mid = st.sidebar.selectbox("상권업종 중분류", mid_options)
 
 if selected_mid != "(전체)":
     filtered = filtered[filtered["중분류명"] == selected_mid]
+    middle_df = filtered # 중분류 df
+else:
+    middle_df = big_df
 
 # 상권업종 소분류
 small_options = ["(전체)"] + sorted(filtered["소분류명"].dropna().unique().tolist())
@@ -188,7 +184,7 @@ scatter_layer = pdk.Layer(
     "ScatterplotLayer",
     data=map_df,
     get_position="[lon, lat]",
-    get_radius=10,  # 반지름 (m 단위 느낌)
+    get_radius=7,  # 반지름 (m 단위 느낌)
     get_fill_color=[0, 120, 255, 160],  # RGBA
     pickable=True,
     auto_highlight=True,
@@ -202,22 +198,26 @@ text_layer = pdk.Layer(
     get_text="상호명",
     get_color=[0, 0, 0, 255],
     get_size=12, # 폰트 크기 (pixels 기준)
+    # get_alignment_baseline="'bottom'",
     ize_units=ptypes.String("pixels"),
     size_min_pixels=10,
     size_max_pixels=20,
 
-    characterSet=ptypes.String("auto"),  # 한글 표시
+    characterSet=ptypes.String("auto"),  # 한글 표시 핵심 설정
     get_background_color=[255, 255, 255, 200],
-    background=True, # 글자 뒤 흰 배경 박스
+    background=True,                 # 글자 뒤 흰 배경 박스
 
     get_text_anchor=ptypes.String("middle"),
     get_alignment_baseline=ptypes.String("top"),
+    # get_pixel_offset=[0, 20], # 점 위치에서 아래쪽으로 살짝 이동
 )
 
 tooltip = {
     "html": (
         "<b>{상호명}</b><br/>"
         "{도로명주소}<br/>"
+        # "{시도명} {시군구명} {법정동명}<br/>"
+        # "{대분류명} / {중분류명} / {소분류명}"
         "{소분류명}"
     ),
     "style": {
@@ -227,11 +227,12 @@ tooltip = {
 }
 
 deck = pdk.Deck(
-    layers=[scatter_layer, text_layer],  # scatter_layer, text_layer 추가
+    layers=[scatter_layer, text_layer],  # 나중에 text_layer 추가 가능
     initial_view_state=view_state,
     tooltip=tooltip,
     map_provider="carto",
     map_style="road", # "light", "dark", "road", "satellite" 등 가능
+    # map_style="mapbox://styles/mapbox/light-v9",  # 기본 지도 스타일
 )
 
 # ======================================
@@ -246,16 +247,16 @@ st.pydeck_chart(deck, width="stretch", height=900, selection_mode="single-object
 # 업종 비율 그래프 (현재 필터 기준)
 # ======================================
 
-st.markdown("### 업종 비율 (현재 필터 기준)")
+st.markdown("### 업종 비율")
 
-tab1, tab2 = st.tabs(["대분류 비율", "중분류 비율"])
+tab1, tab2, tab3 = st.tabs(["대분류 비율", "중분류 비율", "소분류 비율"])
 
 # ========================
 # 탭 1: 업종 대분류 비율
 # ========================
 with tab1:
     biz_big = (
-        filtered["대분류명"]
+        area_df["대분류명"]
         .value_counts(normalize=True)
         .rename("비율")
         .reset_index()
@@ -291,21 +292,21 @@ with tab1:
 # 탭 2: 업종 중분류 비율
 # ========================
 with tab2:
-    biz_mid = (
-        filtered["중분류명"]
+    biz_small = (
+        big_df["중분류명"]
         .value_counts(normalize=True)
         .rename("비율")
         .reset_index()
     )
-    biz_mid.rename(columns={"index": "중분류명"}, inplace=True)
+    biz_small.rename(columns={"index": "중분류명"}, inplace=True)
 
     # 중분류가 너무 많으면 상위 N개만 표시 (옵션)
     MAX_MID = 20
-    if len(biz_mid) > MAX_MID:
-        biz_mid = biz_mid.head(MAX_MID)
+    if len(biz_small) > MAX_MID:
+        biz_small = biz_small.head(MAX_MID)
 
-    bars_mid = (
-        alt.Chart(biz_mid)
+    bars_small = (
+        alt.Chart(biz_small)
         .mark_bar()
         .encode(
             x=alt.X("중분류명:N", sort="-y", title="상권업종 중분류"),
@@ -317,8 +318,8 @@ with tab2:
         )
     )
 
-    text_mid = (
-        alt.Chart(biz_mid)
+    text_small = (
+        alt.Chart(biz_small)
         .mark_text(dy=-5)
         .encode(
             x="중분류명:N",
@@ -327,11 +328,53 @@ with tab2:
         )
     )
 
-    st.altair_chart((bars_mid + text_mid).properties(height=300), width="stretch")
+    st.altair_chart((bars_small + text_small).properties(height=300), width="stretch")
 
+
+# ========================
+# 탭 3: 업종 소분류 비율
+# ========================
+with tab3:
+    biz_small = (
+        middle_df["소분류명"]
+        .value_counts(normalize=True)
+        .rename("비율")
+        .reset_index()
+    )
+    biz_small.rename(columns={"index": "소분류명"}, inplace=True)
+
+    # 소분류가 너무 많으면 상위 N개만 표시 (옵션)
+    MAX_MID = 20
+    if len(biz_small) > MAX_MID:
+        biz_small = biz_small.head(MAX_MID)
+
+    bars_small = (
+        alt.Chart(biz_small)
+        .mark_bar()
+        .encode(
+            x=alt.X("소분류명:N", sort="-y", title="상권업종 소분류"),
+            y=alt.Y("비율:Q", axis=alt.Axis(format="%", title="비율")),
+            tooltip=[
+                alt.Tooltip("소분류명:N", title="업종"),
+                alt.Tooltip("비율:Q", title="비율", format=".1%"),
+            ],
+        )
+    )
+
+    text_small = (
+        alt.Chart(biz_small)
+        .mark_text(dy=-5)
+        .encode(
+            x="소분류명:N",
+            y="비율:Q",
+            text=alt.Text("비율:Q", format=".1%"),
+        )
+    )
+
+    st.altair_chart((bars_small + text_small).properties(height=300), width="stretch")
 
 # ======================================
-# 하단에 데이터프레임 표시
+# 하단에 표도 같이 보여주고 싶으면
 # ======================================
 
 with st.expander("필터링된 상가 목록 보기"):
